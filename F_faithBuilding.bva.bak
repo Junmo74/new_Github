@@ -23,7 +23,7 @@ Private CaptureRoomBorder As TypeMarkBorder
 Private OriginalRoomBorder As TypeMarkBorder
 
 Dim CaptureCurrentRoom As Object
-
+'수정, 깃테스트
 Private Sub btn_배정초기화_Click()
 
   Const cstrPrompt As String = "모든 숙소에 배정된 인원을 배정 취소 하시겠습니까..?"
