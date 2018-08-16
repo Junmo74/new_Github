@@ -1,0 +1,3278 @@
+Option Compare Database
+
+Const sqlRoomRecords As String = "SELECT 접수아이디, 교회아이디, 교회명, 성명, 성별, [교구/구역] FROM T_수양회접수_기본 WHERE [숙소코드]= "
+Const sqlRoomRecordsSort As String = " Order by 교회명, [교구/구역], 성명"
+'방 컨트롤 에서 방 빼기
+Const sqlPersonDeleteInRoom As String = "Update T_수양회접수_기본 set 숙소코드 = 0 Where 접수아이디 in ("
+Const sqlClearRoom As String = "UPDATE T_수양회접수_기본 SET 숙소코드 = 0 WHERE 숙소코드 IN (SELECT 숙소코드 FROM t_숙소목록표 WHERE 건물='믿음관')"
+Const strPleaseFirst As String = "최초 한번은 배정현황 가져오기 버튼을 누르셔야 합니다.-"
+Const BuildingName As String = "믿음관"
+' 배정된 숙소코드 초기화 값
+Const cMain As String = "0"
+
+Const Mouse_Down As Integer = 1
+Const Mouse_Up As Integer = 0
+
+Private Type TypeMarkBorder
+    BorderStyle As Integer
+    BorderWidth As Integer
+    BorderColor As Long
+End Type
+
+Private CaptureRoomBorder As TypeMarkBorder
+Private OriginalRoomBorder As TypeMarkBorder
+
+Dim CaptureCurrentRoom As Object
+
+Private Sub btn_배정초기화_Click()
+
+  Const cstrPrompt As String = "모든 숙소에 배정된 인원을 배정 취소 하시겠습니까..?"
+  If MsgBox(cstrPrompt, vbQuestion + vbYesNo) = vbYes Then
+    If btn_숙소초기화.Tag = "1" Then '테그를 변수처럼 활용하기/최초 배정현황 가져오기가 이루어 졌는지..?
+      Set cDB = CurrentDb()
+      cDB.Execute sqlClearRoom
+      cDB.Close
+    
+      btn_숙소초기화.Tag = ""
+   
+      SelectedItemsInit L_Main
+      Me.L_Main.Requery '배정 인원이 감소했기 때문에 리쿼리
+
+      Dim ctl As Control
+      Dim s As String
+
+      For Each ctl In Me.Controls
+      s = Mid(ctl.name, 1, 3)
+
+        If TypeName(ctl) = "ListBox" And (s = "L65") Then
+          ctl.RowSource = ""
+          ctl.Requery
+          
+          PersonInCurrentRoom Me("B" + Mid(ctl.name, 2, 5)), CStr(0)
+        End If
+      Next
+    End If
+  End If
+End Sub
+
+Private Sub cbo_교회별_AfterUpdate()
+  Me.cbo_호실별 = ""
+  Me.cbo_호실별.Requery
+  
+  Me.L999.Requery
+End Sub
+
+Private Sub cbo_호실별_AfterUpdate()
+  Me.cbo_교회별 = ""
+  Me.cbo_교회별.Requery
+  
+  Me.L999.Requery
+End Sub
+
+' 이미 배정된 사람 검색
+Private Sub cmb_sname_AfterUpdate()
+  L000.Requery
+  cmb_sname = ""
+End Sub
+
+
+Function FileExists(ByVal FileToTest As String) As Boolean
+   FileExists = (Dir(FileToTest) <> "")
+End Function
+
+Private Sub cmdSaveData_baedanibuilding_Click()
+  Dim fd As Object, xmlPath As String, strXml As String, strConn As String
+  Dim sNow As String
+  sNow = Format(Now(), "yyyymmdd_hhnnss")
+  strXml = "믿음관배정현황_" & sNow & ".xlsx"
+
+  Set fd = Application.FileDialog(2)
+  With fd
+  
+    .Title = ".xlsx 파일로 저장"
+    .ButtonName = "저장"
+    .InitialFileName = CurrentProject.Path & "\" & strXml
+    If .Show = True Then
+        xmlPath = .SelectedItems(1)
+        
+        ' 테이블 명 기입란에 쿼리도 가능하다.
+        If FileExists(xmlPath) Then
+          SetAttr xmlPath, vbNormal
+          Kill xmlPath
+        End If
+        '=========================================================================================================================
+        DoCmd.TransferSpreadsheet acExport, acSpreadsheetTypeExcel12Xml, "Q_믿음관배정현황", xmlPath, -1
+        '=========================================================================================================================
+    Else
+      MsgBox "파일 대화 상자에서 취소를 선택했습니다."
+      Exit Sub
+    End If
+      MsgBox "작업중이던 수양회 접수현황을 저장하였습니다.", vbOKOnly
+  End With
+End Sub
+
+Private Sub Form_Open(Cancel As Integer)
+  btn_숙소초기화.Tag = ""
+  
+  L_Main.ColumnCount = "13"
+  L_Main.ColumnWidths = "0cm;1.7cm;1.8cm;0.7cm;0.8cm;1cm;0cm;0cm;0cm;0cm;0.6cm;1.4cm;1.2cm;"
+
+  Set CaptureCurrentRoom = Nothing ' 현재 숙소 보관용 주소 초기화
+  With L65041 '기본 리스트박스(숙소) 보더스타일 저장해두기/복원할때 사용
+      OriginalRoomBorder.BorderColor = .BorderColor
+      OriginalRoomBorder.BorderStyle = .BorderStyle
+      OriginalRoomBorder.BorderWidth = .BorderWidth
+  End With
+
+End Sub
+
+Function GetRoomCode(ToControl As Object) As String
+  If TypeName(ToControl) = "ListBox" Then
+    s = Mid(ToControl.name, 2, 5)
+    If (Left(s, 1) = "6") Then
+      GetRoomCode = s
+    End If
+  End If
+  
+End Function
+' 만약 방 리스트 박스가 맞으면 진행/리스트박스의 이름으로 테이블 에서 방 코드 가져오기
+'  Dim s As String
+'  Dim i As Integer
+
+'  s = Mid(ToControl.name, 1, 3)
+'  If (s = "L65") Then
+'    Dim rstGetCode As Recordset
+    
+'    s = "SELECT 숙소코드 FROM T_숙소목록표 WHERE 숙소코드 LIKE '" & Mid(ToControl.name, 2, 5) & "'" ' 믿음관 부터는 숙소컨트롤 이름을 코드로 고정, 코드로 방 찾기
+  
+'    Set cDB = CurrentDb()
+'    Set rstGetCode = cDB.OpenRecordset(s, dbOpenForwardOnly)
+  
+'    GetRoomCode = rstGetCode!숙소코드 ' 함수 반환값으로 숙소코드 반환해주기
+  
+'    rstGetCode.Close
+'    cDB.Close
+'  End If
+'End Function
+
+' 해당방에 배정/소스 리스트박스는 어차피 고정이므로 하드코딩 / 메인 리스트 박스의 값을 얻어온 숙소코드로 적용
+Private Sub RoomApplyProcedure(cCode As String, pToControl As Object)
+  If cCode <> "" Then
+    Dim intc As Integer
+  
+    Set cDB = CurrentDb()
+    sSQL = "Update T_수양회접수_기본 set 숙소코드 = " + cCode + " Where 접수아이디 in ("
+    
+    intc = L_Main.ItemsSelected.Count
+    For k = 0 To intc - 1
+      If k = (intc - 1) Then
+        sSQL = sSQL + L_Main.itemData(L_Main.ItemsSelected(k)) + ")"
+      Else
+       sSQL = sSQL + L_Main.itemData(L_Main.ItemsSelected(k)) + ","
+      End If
+    Next
+
+    cDB.Execute sSQL
+    cDB.Close
+    
+    SelectedItemsInit L_Main
+
+    Me.L_Main.Requery '배정 인원이 감소했기 때문에 리쿼리
+
+    pToControl.Requery '인원이 숙소에 추가 되었기 때문에 리쿼리
+   '=================================================== 해당 숙소 인원 수 표기
+    
+    PersonInCurrentRoom Me("B" + Mid(pToControl.name, 2, 5)), CStr(pToControl.ListCount)
+  End If
+End Sub
+
+'== 각 숙소에 배정된 인원 갱신
+Public Sub PersonInCurrentRoom(cObj As Object, sCnt As String)
+  ' 숙소표에서 호실 찾아와서 붙이기
+  Dim rstGetCode As Recordset
+  
+  s = "SELECT 방호수 FROM T_숙소목록표 WHERE 숙소코드 LIKE '" & Mid(cObj.name, 2, 5) & "'"
+  Set cDB = CurrentDb()
+  Set rstGetCode = cDB.OpenRecordset(s, dbOpenForwardOnly)
+  
+  cObj.Caption = rstGetCode!방호수 & " : " & sCnt & " 명"
+  
+  rstGetCode.Close
+  cDB.Close
+End Sub
+
+'방 빼는 프로시져==================================================================================================
+Private Sub DeletePersonInRoom(sqlPersonDeleteInRoom As String, pToControl As Object)
+  intc = pToControl.ItemsSelected.Count
+  Set cDB = CurrentDb()
+
+  sSQL = sqlPersonDeleteInRoom
+    
+  For k = 0 To intc - 1
+    If k = (intc - 1) Then '한 방에서 여러명 선택해서 뺄때 루프 돌아야 함
+      sSQL = sSQL + pToControl.itemData(pToControl.ItemsSelected(k)) + ")"
+    Else
+      sSQL = sSQL + pToControl.itemData(pToControl.ItemsSelected(k)) + ","
+    End If
+  Next
+    
+  If sSQL = "" Then
+    Exit Sub
+  End If
+    
+  cDB.Execute sSQL
+  cDB.Close
+    
+  pToControl.Requery ' 현재 선택된 방 리쿼리
+
+  PersonInCurrentRoom Me("B" + Mid(pToControl.name, 2, 5)), CStr(pToControl.ListCount)
+End Sub
+
+Private Sub btn_숙소초기화_Click()
+  Dim ctl As Control
+  Dim s As String
+  Dim intc As Integer
+  
+  For Each ctl In Me.Controls
+  s = Mid(ctl.name, 1, 3)
+  
+    If TypeName(ctl) = "ListBox" And (s = "L65") Then
+      ctl.RowSource = sqlRoomRecords + GetRoomCode(ctl) + sqlRoomRecordsSort
+      ctl.Requery
+
+      ctl.ColumnCount = "6"
+      ctl.ColumnWidths = "0cm;0cm;1.4cm;1.3cm;0cm;0.6cm;"
+
+      PersonInCurrentRoom Me("B" + Mid(ctl.name, 2, 5)), CStr(ctl.ListCount)
+      
+      btn_숙소초기화.Tag = "1" ' 배정 현황을 최초 한번은 실행후 배정가능
+    End If
+  Next
+End Sub
+
+Private Sub SetBorder(ctl As Access.Control, ApplyBorder As TypeMarkBorder)
+    With ApplyBorder
+        ctl.BorderColor = .BorderColor
+        ctl.BorderStyle = .BorderStyle
+        ctl.BorderWidth = .BorderWidth
+    End With
+End Sub
+
+Private Sub SelectedItemsInit(obj As Object) '리스트 박스에 선택항목 미선택으로 초기화
+  Dim intCurrentRow As Integer
+  For intCurrentRow = 0 To obj.ListCount - 1
+    If obj.Selected(intCurrentRow) Then
+      obj.Selected(intCurrentRow) = False
+    End If
+  Next intCurrentRow
+End Sub
+
+
+' 현재 방 컨트롤 설정/ 이 프로시져는 반드시 올바로 발생하게 되어 있음/인자의 널 상태 오류 대처할 필요 없음
+Public Sub BackupCurrentRoom(oCur As Object) '==========================================================================
+' 1. 처음 현재 컨트롤 선택의 경우
+'    가. 현재 컨트롤 백업
+'    나. 현재 컨트롤 보드 속성 변경
+' 2. 이전 컨트롤 에서 현재 선택의 경우
+'    가. 이전 컨트롤 초기화
+'    나. 이전 컨트롤 보드 원래상태로 복원
+
+  If Not CaptureCurrentRoom Is Nothing Then
+    ' 1. 이전에 백업된 숙소가 있으면 선택 아이템레코드 모두 초기화
+    SelectedItemsInit CaptureCurrentRoom
+    ' 2. 백업 숙소의 보드 속성 원상태 복구
+    SetBorder CaptureCurrentRoom, OriginalRoomBorder
+  End If
+
+    ' 현재 선택된 리스트박스 백업 저장
+  Set CaptureCurrentRoom = oCur
+  With oCur
+      .BorderColor = vbGreen
+      .BorderStyle = 4 ' Dots
+      .BorderWidth = 3
+  End With
+  
+End Sub
+
+
+'===============================================================================================================
+Private Sub L_Main_KeyUp(KeyCode As Integer, Shift As Integer) ' 메인 리스트박스(미배정인원전체) 에서 영문 A 키로 선택된 숙소에 방 배정
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) And (Not CaptureCurrentRoom Is Nothing) Then
+    If btn_숙소초기화.Tag = "1" Then
+       RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+    Else
+      MsgBox strPleaseFirst
+    End If
+  End If
+  
+  ' 컨트롤 + Z 키로 롤백 하기. 그렇다면 롤백 프로시저 만들고, 인원 추가 배정 때 마다 또는 배정삭제때 마다 어느 방에 어느 아이디 인지 백업
+  ' 숙소 배정인지, 배정 취소인지
+  ' 어느 숙소에서, 어느 숙소로, 접수아이디 는 누구
+
+  If Shift = 2 And KeyCode = vbKeyZ Then
+    MsgBox "아직 롤백 기능은 안 만들었어요"
+  End If
+End Sub
+Private Sub cbo_교회_AfterUpdate()
+  Me.cbo_교구역 = ""
+  Me.cbo_교구역.Requery
+  Me.cbo_남녀 = ""
+  Me.cbo_남녀.Requery
+  Me.cbo_이름 = ""
+  Me.cbo_이름.Requery
+
+  Me.L_Main.Requery
+End Sub
+Private Sub cbo_교구역_AfterUpdate()
+  Me.cbo_남녀 = ""
+  Me.cbo_남녀.Requery
+  Me.cbo_이름 = ""
+  Me.cbo_이름.Requery
+  
+  Me.L_Main.Requery
+End Sub
+
+Private Sub cbo_남녀_AfterUpdate()
+  Me.cbo_이름 = ""
+  Me.cbo_이름.Requery
+  
+  Me.L_Main.Requery
+End Sub
+
+Private Sub cbo_이름_AfterUpdate()
+  Me.L_Main.Requery
+End Sub
+
+Private Sub Command260_Click()
+  Me.cbo_교회 = ""
+  Me.cbo_교구역 = ""
+  Me.cbo_남녀 = ""
+  Me.cbo_이름 = ""
+  
+  Me.cbo_영유아 = ""
+
+  Me.L_Main.Requery
+  
+  SelectedItemsInit L_Main
+End Sub
+
+Private Sub cbo_영유아_AfterUpdate()
+'  Dim s As String
+'  Dim rstGetCode As Recordset
+'  s = sqlLMain + "WHERE 영유아포함 Like " + "'*" + cbo_영유아.Text + "*'"
+  
+'  Set cDB = CurrentDb()
+'  Set rstGetCode = cDB.OpenRecordset(s, dbOpenForwardOnly)
+  
+'    GetRoomCode = rstGetCode!숙소코드 ' 함수 반환값으로 숙소코드 반환해주기
+  
+'  rstGetCode.Close
+  
+ 
+ 
+'  L_Main.RowSource = sqlLMain + "WHERE 영유아포함 Like " + "'*" + cbo_영유아.Text + "*'"
+'  L_Main.Requery
+End Sub
+
+'========================================================================================
+'========================================================================================
+' 각 숙소 리스트 박스에서 지우기 버튼이 눌렸을 경우 선택된 인원을 미배정으로 돌림
+'========================================================================================
+'========================================================================================
+
+
+Private Sub L65041_KeyUp(KeyCode As Integer, Shift As Integer)
+  If (KeyCode = vbKeyDelete) And (L65041.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65041
+    L_Main.Requery
+  End If
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65042_KeyUp(KeyCode As Integer, Shift As Integer)
+  If (KeyCode = vbKeyDelete) And (L65042.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65042
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65043_KeyUp(KeyCode As Integer, Shift As Integer)
+  If (KeyCode = vbKeyDelete) And (L65043.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65043
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65044_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65044.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65044
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65045_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65045.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65045
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65046_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65046.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65046
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65047_KeyUp(KeyCode As Integer, Shift As Integer)
+  If (KeyCode = vbKeyDelete) And (L65047.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65047
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65048_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65048.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65048
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65049_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65049.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65049
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65050_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65050.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65050
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65051_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65051.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65051
+    L_Main.Requery
+
+  End If
+
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65052_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65052.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65052
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65053_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65053.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65053
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65054_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65054.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65054
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65055_KeyUp(KeyCode As Integer, Shift As Integer)
+  If (KeyCode = vbKeyDelete) And (L65055.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65055
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65056_KeyUp(KeyCode As Integer, Shift As Integer)
+  If (KeyCode = vbKeyDelete) And (L65056.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65056
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65057_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65057.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65057
+    Me.L_Main.Requery
+  End If
+
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+ Private Sub L65058_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65058.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65058
+    Me.L_Main.Requery
+  End If
+
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65076_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65076.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65076
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65080_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65080.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65080
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65081_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65081.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65081
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65082_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65082.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65082
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65083_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65083.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65083
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65084_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65084.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65084
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+ Private Sub L65085_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65085.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65085
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+ Private Sub L65086_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65086.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65086
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65087_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65087.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65087
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65077_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65077.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65077
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+ Private Sub L65078_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65078.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65078
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65079_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65079.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65079
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65059_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65059.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65059
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65088_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65088.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65088
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+
+Private Sub L65060_KeyUp(KeyCode As Integer, Shift As Integer)
+ 
+  If (KeyCode = vbKeyDelete) And (L65060.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65060
+    L_Main.Requery
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+Private Sub L65061_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65061.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65061
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+ Private Sub L65062_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65062.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65062
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+ Private Sub L65063_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65063.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65063
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65064_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65064.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65064
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65065_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65065.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65065
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+ Private Sub L65066_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65066.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65066
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65067_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65067.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65067
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65069_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65069.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65069
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65071_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65071.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65071
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+ 
+ Private Sub L65072_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65072.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65072
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65073_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65073.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65073
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65074_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65074.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65074
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+ 
+Private Sub L65075_KeyUp(KeyCode As Integer, Shift As Integer)
+
+  If (KeyCode = vbKeyDelete) And (L65075.ItemsSelected.Count > 0) Then
+    DeletePersonInRoom sqlPersonDeleteInRoom, L65075
+    L_Main.Requery
+
+  End If
+    
+  If (KeyCode = vbKeyA) And (L_Main.ItemsSelected.Count > 0) Then
+  If btn_숙소초기화.Tag <> "1" Then
+    MsgBox strPleaseFirst
+    
+    Exit Sub
+  End If
+    RoomApplyProcedure GetRoomCode(CaptureCurrentRoom), CaptureCurrentRoom
+  End If
+ End Sub
+
+'========================================================================================
+'========================================================================================
+'위에서 부터 여기까지
+'========================================================================================
+'========================================================================================
+
+'========================================================================================
+'========================================================================================
+'각 숙소 리스트박스가 클릭되어 포커스를 얻으면 현재숙소백업처리
+'========================================================================================
+'========================================================================================
+Private Sub L65041_GotFocus()
+  BackupCurrentRoom L65041
+End Sub
+
+Private Sub L65042_GotFocus()
+  BackupCurrentRoom L65042
+ End Sub
+
+Private Sub L65043_GotFocus()
+  BackupCurrentRoom L65043
+ End Sub
+
+Private Sub L65044_GotFocus()
+  BackupCurrentRoom L65044
+ End Sub
+
+Private Sub L65045_GotFocus()
+  BackupCurrentRoom L65045
+ End Sub
+
+Private Sub L65046_GotFocus()
+  BackupCurrentRoom L65046
+ End Sub
+
+Private Sub L65047_GotFocus()
+  BackupCurrentRoom L65047
+ End Sub
+
+Private Sub L65048_GotFocus()
+  BackupCurrentRoom L65048
+ End Sub
+
+Private Sub L65049_GotFocus()
+  BackupCurrentRoom L65049
+ End Sub
+
+Private Sub L65050_GotFocus()
+  BackupCurrentRoom L65050
+ End Sub
+
+Private Sub L65051_GotFocus()
+  BackupCurrentRoom L65051
+ End Sub
+
+Private Sub L65052_GotFocus()
+  BackupCurrentRoom L65052
+ End Sub
+
+Private Sub L65053_GotFocus()
+  BackupCurrentRoom L65053
+ End Sub
+
+Private Sub L65054_GotFocus()
+  BackupCurrentRoom L65054
+ End Sub
+ 
+Private Sub L65055_GotFocus()
+  BackupCurrentRoom L65055
+ End Sub
+ 
+Private Sub L65056_GotFocus()
+  BackupCurrentRoom L65056
+ End Sub
+
+Private Sub L65057_GotFocus()
+  BackupCurrentRoom L65057
+ End Sub
+ 
+Private Sub L65058_GotFocus()
+  BackupCurrentRoom L65058
+ End Sub
+ 
+Private Sub L65076_GotFocus()
+  BackupCurrentRoom L65076
+ End Sub
+
+Private Sub L65080_GotFocus()
+  BackupCurrentRoom L65080
+ End Sub
+
+Private Sub L65081_GotFocus()
+  BackupCurrentRoom L65081
+ End Sub
+
+Private Sub L65082_GotFocus()
+  BackupCurrentRoom L65082
+ End Sub
+
+Private Sub L65083_GotFocus()
+  BackupCurrentRoom L65083
+ End Sub
+
+Private Sub L65084_GotFocus()
+  BackupCurrentRoom L65084
+ End Sub
+
+Private Sub L65085_GotFocus()
+  BackupCurrentRoom L65085
+ End Sub
+
+Private Sub L65086_GotFocus()
+  BackupCurrentRoom L65086
+ End Sub
+ 
+ Private Sub L65087_GotFocus()
+  BackupCurrentRoom L65087
+ End Sub
+
+ Private Sub L65077_GotFocus()
+  BackupCurrentRoom L65077
+ End Sub
+
+ Private Sub L65078_GotFocus()
+  BackupCurrentRoom L65078
+ End Sub
+ 
+ Private Sub L65079_GotFocus()
+  BackupCurrentRoom L65079
+ End Sub
+
+ Private Sub L65059_GotFocus()
+  BackupCurrentRoom L65059
+ End Sub
+ 
+ Private Sub L65088_GotFocus()
+  BackupCurrentRoom L65088
+ End Sub
+ 
+ Private Sub L65060_GotFocus()
+  BackupCurrentRoom L65060
+ End Sub
+ 
+ Private Sub L65061_GotFocus()
+  BackupCurrentRoom L65061
+ End Sub
+ 
+ Private Sub L65062_GotFocus()
+  BackupCurrentRoom L65062
+ End Sub
+ 
+ Private Sub L65063_GotFocus()
+  BackupCurrentRoom L65063
+ End Sub
+ 
+ Private Sub L65064_GotFocus()
+  BackupCurrentRoom L65064
+ End Sub
+ 
+ Private Sub L65065_GotFocus()
+  BackupCurrentRoom L65065
+ End Sub
+ 
+ Private Sub L65066_GotFocus()
+  BackupCurrentRoom L65066
+ End Sub
+ 
+ Private Sub L65067_GotFocus()
+  BackupCurrentRoom L65067
+ End Sub
+ 
+ Private Sub L65069_GotFocus()
+  BackupCurrentRoom L65069
+ End Sub
+ 
+ Private Sub L65071_GotFocus()
+  BackupCurrentRoom L65071
+ End Sub
+ 
+ Private Sub L65072_GotFocus()
+  BackupCurrentRoom L65072
+ End Sub
+
+ Private Sub L65073_GotFocus()
+  BackupCurrentRoom L65073
+ End Sub
+
+ Private Sub L65074_GotFocus()
+  BackupCurrentRoom L65074
+ End Sub
+
+ Private Sub L65075_GotFocus()
+  BackupCurrentRoom L65075
+ End Sub
+
+'========================================================================================
+'========================================================================================
+'여기까지
+'========================================================================================
+'========================================================================================
+
+'========================================================================================
+'========================================================================================
+'각 숙소 리스트 박스간 드래그를 위한 코드
+'========================================================================================
+'========================================================================================
+
+Private Sub L65041_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65041_MouseDown
+
+  If Me.L65041.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65041_MouseDown:
+    Exit Sub
+
+Err_L65041_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65041_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65041_MouseDown
+
+End Sub
+
+Private Sub L65041_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65041_MouseMove
+
+    DetectDrop Me, Me.L65041, Button, Shift, x, y
+
+End_L65041_MouseMove:
+    Exit Sub
+
+Err_L65041_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65041_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65041_MouseMove
+
+End Sub
+
+Private Sub L65041_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65041_MouseUp
+
+    StopDrag
+
+End_L65041_MouseUp:
+    Exit Sub
+
+Err_L65041_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65041_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65041_MouseUp
+
+End Sub
+
+Private Sub L65042_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65042_MouseDown
+
+  If Me.L65042.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65042_MouseDown:
+    Exit Sub
+
+Err_L65042_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65042_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65042_MouseDown
+
+End Sub
+
+Private Sub L65042_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65042_MouseMove
+
+    DetectDrop Me, Me.L65042, Button, Shift, x, y
+
+End_L65042_MouseMove:
+    Exit Sub
+
+Err_L65042_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65042_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65042_MouseMove
+
+End Sub
+
+Private Sub L65042_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65042_MouseUp
+
+    StopDrag
+
+End_L65042_MouseUp:
+    Exit Sub
+
+Err_L65042_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65042_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65042_MouseUp
+
+End Sub
+
+
+Private Sub L65043_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65043_MouseDown
+
+  If Me.L65043.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65043_MouseDown:
+    Exit Sub
+
+Err_L65043_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65043_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65043_MouseDown
+
+End Sub
+
+Private Sub L65043_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65043_MouseMove
+
+    DetectDrop Me, Me.L65043, Button, Shift, x, y
+
+End_L65043_MouseMove:
+    Exit Sub
+
+Err_L65043_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65043_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65043_MouseMove
+
+End Sub
+
+Private Sub L65043_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65043_MouseUp
+
+    StopDrag
+
+End_L65043_MouseUp:
+    Exit Sub
+
+Err_L65043_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65043_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65043_MouseUp
+
+End Sub
+
+Private Sub L65044_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65044_MouseDown
+
+  If Me.L65044.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65044_MouseDown:
+    Exit Sub
+
+Err_L65044_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65044_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65044_MouseDown
+
+End Sub
+
+Private Sub L65044_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65044_MouseMove
+
+    DetectDrop Me, Me.L65044, Button, Shift, x, y
+
+End_L65044_MouseMove:
+    Exit Sub
+
+Err_L65044_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65044_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65044_MouseMove
+
+End Sub
+
+Private Sub L65044_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65044_MouseUp
+
+    StopDrag
+
+End_L65044_MouseUp:
+    Exit Sub
+
+Err_L65044_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65044_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65044_MouseUp
+
+End Sub
+
+
+Private Sub L65045_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65045_MouseDown
+
+  If Me.L65045.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65045_MouseDown:
+    Exit Sub
+
+Err_L65045_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65045_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65045_MouseDown
+
+End Sub
+
+Private Sub L65045_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65045_MouseMove
+
+    DetectDrop Me, Me.L65045, Button, Shift, x, y
+
+End_L65045_MouseMove:
+    Exit Sub
+
+Err_L65045_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65045_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65045_MouseMove
+
+End Sub
+
+Private Sub L65045_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65045_MouseUp
+
+    StopDrag
+
+End_L65045_MouseUp:
+    Exit Sub
+
+Err_L65045_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65045_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65045_MouseUp
+
+End Sub
+
+
+Private Sub L65046_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65046_MouseDown
+
+  If Me.L65046.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65046_MouseDown:
+    Exit Sub
+
+Err_L65046_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65046_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65046_MouseDown
+
+End Sub
+
+Private Sub L65046_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65046_MouseMove
+
+    DetectDrop Me, Me.L65046, Button, Shift, x, y
+
+End_L65046_MouseMove:
+    Exit Sub
+
+Err_L65046_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65046_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65046_MouseMove
+
+End Sub
+
+Private Sub L65046_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65046_MouseUp
+
+    StopDrag
+
+End_L65046_MouseUp:
+    Exit Sub
+
+Err_L65046_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65046_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65046_MouseUp
+
+End Sub
+
+
+Private Sub L65047_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65047_MouseDown
+
+  If Me.L65047.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65047_MouseDown:
+    Exit Sub
+
+Err_L65047_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65047_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65047_MouseDown
+
+End Sub
+
+Private Sub L65047_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65047_MouseMove
+
+    DetectDrop Me, Me.L65047, Button, Shift, x, y
+
+End_L65047_MouseMove:
+    Exit Sub
+
+Err_L65047_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65047_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65047_MouseMove
+
+End Sub
+
+Private Sub L65047_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65047_MouseUp
+
+    StopDrag
+
+End_L65047_MouseUp:
+    Exit Sub
+
+Err_L65047_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65047_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65047_MouseUp
+
+End Sub
+
+
+Private Sub L65048_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65048_MouseDown
+
+  If Me.L65048.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65048_MouseDown:
+    Exit Sub
+
+Err_L65048_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65048_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65048_MouseDown
+
+End Sub
+
+Private Sub L65048_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65048_MouseMove
+
+    DetectDrop Me, Me.L65048, Button, Shift, x, y
+
+End_L65048_MouseMove:
+    Exit Sub
+
+Err_L65048_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65048_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65048_MouseMove
+
+End Sub
+
+Private Sub L65048_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65048_MouseUp
+
+    StopDrag
+
+End_L65048_MouseUp:
+    Exit Sub
+
+Err_L65048_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65048_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65048_MouseUp
+
+End Sub
+
+
+Private Sub L65049_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65049_MouseDown
+
+  If Me.L65049.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65049_MouseDown:
+    Exit Sub
+
+Err_L65049_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65049_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65049_MouseDown
+
+End Sub
+
+Private Sub L65049_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65049_MouseMove
+
+    DetectDrop Me, Me.L65049, Button, Shift, x, y
+
+End_L65049_MouseMove:
+    Exit Sub
+
+Err_L65049_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65049_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65049_MouseMove
+
+End Sub
+
+Private Sub L65049_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65049_MouseUp
+
+    StopDrag
+
+End_L65049_MouseUp:
+    Exit Sub
+
+Err_L65049_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65049_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65049_MouseUp
+
+End Sub
+
+Private Sub L65050_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65050_MouseDown
+
+  If Me.L65050.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65050_MouseDown:
+    Exit Sub
+
+Err_L65050_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65050_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65050_MouseDown
+
+End Sub
+
+Private Sub L65050_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65050_MouseMove
+
+    DetectDrop Me, Me.L65050, Button, Shift, x, y
+
+End_L65050_MouseMove:
+    Exit Sub
+
+Err_L65050_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65050_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65050_MouseMove
+
+End Sub
+
+Private Sub L65050_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65050_MouseUp
+
+    StopDrag
+
+End_L65050_MouseUp:
+    Exit Sub
+
+Err_L65050_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65050_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65050_MouseUp
+
+End Sub
+
+Private Sub L65051_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65051_MouseDown
+
+  If Me.L65051.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65051_MouseDown:
+    Exit Sub
+
+Err_L65051_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65051_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65051_MouseDown
+
+End Sub
+
+Private Sub L65051_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65051_MouseMove
+
+    DetectDrop Me, Me.L65051, Button, Shift, x, y
+
+End_L65051_MouseMove:
+    Exit Sub
+
+Err_L65051_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65051_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65051_MouseMove
+
+End Sub
+
+Private Sub L65051_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65051_MouseUp
+
+    StopDrag
+
+End_L65051_MouseUp:
+    Exit Sub
+
+Err_L65051_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65051_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65051_MouseUp
+
+End Sub
+
+Private Sub L65052_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65052_MouseDown
+
+  If Me.L65052.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65052_MouseDown:
+    Exit Sub
+
+Err_L65052_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65052_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65052_MouseDown
+
+End Sub
+
+Private Sub L65052_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65052_MouseMove
+
+    DetectDrop Me, Me.L65052, Button, Shift, x, y
+
+End_L65052_MouseMove:
+    Exit Sub
+
+Err_L65052_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65052_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65052_MouseMove
+
+End Sub
+
+Private Sub L65052_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65052_MouseUp
+
+    StopDrag
+
+End_L65052_MouseUp:
+    Exit Sub
+
+Err_L65052_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65052_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65052_MouseUp
+
+End Sub
+
+
+Private Sub L65053_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65053_MouseDown
+
+  If Me.L65053.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65053_MouseDown:
+    Exit Sub
+
+Err_L65053_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65053_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65053_MouseDown
+
+End Sub
+
+Private Sub L65053_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65053_MouseMove
+
+    DetectDrop Me, Me.L65053, Button, Shift, x, y
+
+End_L65053_MouseMove:
+    Exit Sub
+
+Err_L65053_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65053_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65053_MouseMove
+
+End Sub
+
+Private Sub L65053_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65053_MouseUp
+
+    StopDrag
+
+End_L65053_MouseUp:
+    Exit Sub
+
+Err_L65053_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65053_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65053_MouseUp
+
+End Sub
+
+
+Private Sub L65054_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65054_MouseDown
+
+  If Me.L65054.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65054_MouseDown:
+    Exit Sub
+
+Err_L65054_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65054_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65054_MouseDown
+
+End Sub
+
+Private Sub L65054_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65054_MouseMove
+
+    DetectDrop Me, Me.L65054, Button, Shift, x, y
+
+End_L65054_MouseMove:
+    Exit Sub
+
+Err_L65054_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65054_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65054_MouseMove
+
+End Sub
+
+Private Sub L65054_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65054_MouseUp
+
+    StopDrag
+
+End_L65054_MouseUp:
+    Exit Sub
+
+Err_L65054_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65054_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65054_MouseUp
+
+End Sub
+
+'===
+
+Private Sub L65055_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65055_MouseDown
+
+  If Me.L65055.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65055_MouseDown:
+    Exit Sub
+
+Err_L65055_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65055_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65055_MouseDown
+
+End Sub
+
+Private Sub L65055_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65055_MouseMove
+
+    DetectDrop Me, Me.L65055, Button, Shift, x, y
+
+End_L65055_MouseMove:
+    Exit Sub
+
+Err_L65055_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65055_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65055_MouseMove
+
+End Sub
+
+Private Sub L65055_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65055_MouseUp
+
+    StopDrag
+
+End_L65055_MouseUp:
+    Exit Sub
+
+Err_L65055_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65055_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65055_MouseUp
+
+End Sub
+
+Private Sub L65056_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65056_MouseDown
+
+  If Me.L65056.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65056_MouseDown:
+    Exit Sub
+
+Err_L65056_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65056_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65056_MouseDown
+
+End Sub
+
+Private Sub L65056_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65056_MouseMove
+
+    DetectDrop Me, Me.L65056, Button, Shift, x, y
+
+End_L65056_MouseMove:
+    Exit Sub
+
+Err_L65056_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65056_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65056_MouseMove
+
+End Sub
+
+Private Sub L65056_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65056_MouseUp
+
+    StopDrag
+
+End_L65056_MouseUp:
+    Exit Sub
+
+Err_L65056_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65056_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65056_MouseUp
+
+End Sub
+
+
+Private Sub L65057_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65057_MouseDown
+
+  If Me.L65057.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65057_MouseDown:
+    Exit Sub
+
+Err_L65057_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65057_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65057_MouseDown
+
+End Sub
+
+Private Sub L65057_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65057_MouseMove
+
+    DetectDrop Me, Me.L65057, Button, Shift, x, y
+
+End_L65057_MouseMove:
+    Exit Sub
+
+Err_L65057_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65057_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65057_MouseMove
+
+End Sub
+
+Private Sub L65057_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65057_MouseUp
+
+    StopDrag
+
+End_L65057_MouseUp:
+    Exit Sub
+
+Err_L65057_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65057_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65057_MouseUp
+
+End Sub
+
+
+Private Sub L65058_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65058_MouseDown
+
+  If Me.L65058.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65058_MouseDown:
+    Exit Sub
+
+Err_L65058_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65058_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65058_MouseDown
+
+End Sub
+
+Private Sub L65058_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65058_MouseMove
+
+    DetectDrop Me, Me.L65058, Button, Shift, x, y
+
+End_L65058_MouseMove:
+    Exit Sub
+
+Err_L65058_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65058_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65058_MouseMove
+
+End Sub
+
+Private Sub L65058_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65058_MouseUp
+
+    StopDrag
+
+End_L65058_MouseUp:
+    Exit Sub
+
+Err_L65058_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65058_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65058_MouseUp
+
+End Sub
+
+Private Sub L65076_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65076_MouseDown
+
+  If Me.L65076.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65076_MouseDown:
+    Exit Sub
+
+Err_L65076_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65076_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65076_MouseDown
+
+End Sub
+
+Private Sub L65076_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65076_MouseMove
+
+    DetectDrop Me, Me.L65076, Button, Shift, x, y
+
+End_L65076_MouseMove:
+    Exit Sub
+
+Err_L65076_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65076_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65076_MouseMove
+
+End Sub
+
+Private Sub L65076_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65076_MouseUp
+
+    StopDrag
+
+End_L65076_MouseUp:
+    Exit Sub
+
+Err_L65076_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65076_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65076_MouseUp
+
+End Sub
+
+
+Private Sub L65080_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65080_MouseDown
+
+  If Me.L65080.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65080_MouseDown:
+    Exit Sub
+
+Err_L65080_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65080_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65080_MouseDown
+
+End Sub
+
+Private Sub L65080_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65080_MouseMove
+
+    DetectDrop Me, Me.L65080, Button, Shift, x, y
+
+End_L65080_MouseMove:
+    Exit Sub
+
+Err_L65080_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65080_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65080_MouseMove
+
+End Sub
+
+Private Sub L65080_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65080_MouseUp
+
+    StopDrag
+
+End_L65080_MouseUp:
+    Exit Sub
+
+Err_L65080_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65080_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65080_MouseUp
+
+End Sub
+
+
+Private Sub L65081_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65081_MouseDown
+
+  If Me.L65081.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65081_MouseDown:
+    Exit Sub
+
+Err_L65081_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65081_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65081_MouseDown
+
+End Sub
+
+Private Sub L65081_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65081_MouseMove
+
+    DetectDrop Me, Me.L65081, Button, Shift, x, y
+
+End_L65081_MouseMove:
+    Exit Sub
+
+Err_L65081_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65081_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65081_MouseMove
+
+End Sub
+
+Private Sub L65081_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65081_MouseUp
+
+    StopDrag
+
+End_L65081_MouseUp:
+    Exit Sub
+
+Err_L65081_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65081_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65081_MouseUp
+
+End Sub
+
+
+Private Sub L65082_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65082_MouseDown
+
+  If Me.L65082.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65082_MouseDown:
+    Exit Sub
+
+Err_L65082_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65082_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65082_MouseDown
+
+End Sub
+
+Private Sub L65082_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65082_MouseMove
+
+    DetectDrop Me, Me.L65082, Button, Shift, x, y
+
+End_L65082_MouseMove:
+    Exit Sub
+
+Err_L65082_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65082_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65082_MouseMove
+
+End Sub
+
+Private Sub L65082_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65082_MouseUp
+
+    StopDrag
+
+End_L65082_MouseUp:
+    Exit Sub
+
+Err_L65082_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65082_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65082_MouseUp
+
+End Sub
+
+
+Private Sub L65083_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65083_MouseDown
+
+  If Me.L65083.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65083_MouseDown:
+    Exit Sub
+
+Err_L65083_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65083_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65083_MouseDown
+
+End Sub
+
+Private Sub L65083_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65083_MouseMove
+
+    DetectDrop Me, Me.L65083, Button, Shift, x, y
+
+End_L65083_MouseMove:
+    Exit Sub
+
+Err_L65083_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65083_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65083_MouseMove
+
+End Sub
+
+Private Sub L65083_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65083_MouseUp
+
+    StopDrag
+
+End_L65083_MouseUp:
+    Exit Sub
+
+Err_L65083_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65083_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65083_MouseUp
+
+End Sub
+
+Private Sub L65084_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65084_MouseDown
+
+  If Me.L65084.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65084_MouseDown:
+    Exit Sub
+
+Err_L65084_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65084_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65084_MouseDown
+
+End Sub
+
+Private Sub L65084_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65084_MouseMove
+
+    DetectDrop Me, Me.L65084, Button, Shift, x, y
+
+End_L65084_MouseMove:
+    Exit Sub
+
+Err_L65084_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65084_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65084_MouseMove
+
+End Sub
+
+Private Sub L65084_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65084_MouseUp
+
+    StopDrag
+
+End_L65084_MouseUp:
+    Exit Sub
+
+Err_L65084_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65084_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65084_MouseUp
+
+End Sub
+
+
+Private Sub L65085_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65085_MouseDown
+
+  If Me.L65085.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65085_MouseDown:
+    Exit Sub
+
+Err_L65085_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65085_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65085_MouseDown
+
+End Sub
+
+Private Sub L65085_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65085_MouseMove
+
+    DetectDrop Me, Me.L65085, Button, Shift, x, y
+
+End_L65085_MouseMove:
+    Exit Sub
+
+Err_L65085_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65085_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65085_MouseMove
+
+End Sub
+
+Private Sub L65085_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65085_MouseUp
+
+    StopDrag
+
+End_L65085_MouseUp:
+    Exit Sub
+
+Err_L65085_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65085_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65085_MouseUp
+
+End Sub
+
+
+Private Sub L65086_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65086_MouseDown
+
+  If Me.L65086.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65086_MouseDown:
+    Exit Sub
+
+Err_L65086_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65086_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65086_MouseDown
+
+End Sub
+
+Private Sub L65086_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65086_MouseMove
+
+    DetectDrop Me, Me.L65086, Button, Shift, x, y
+
+End_L65086_MouseMove:
+    Exit Sub
+
+Err_L65086_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65086_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65086_MouseMove
+
+End Sub
+
+Private Sub L65086_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65086_MouseUp
+
+    StopDrag
+
+End_L65086_MouseUp:
+    Exit Sub
+
+Err_L65086_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65086_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65086_MouseUp
+
+End Sub
+
+
+Private Sub L65087_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65087_MouseDown
+
+  If Me.L65087.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65087_MouseDown:
+    Exit Sub
+
+Err_L65087_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65087_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65087_MouseDown
+
+End Sub
+
+Private Sub L65087_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65087_MouseMove
+
+    DetectDrop Me, Me.L65087, Button, Shift, x, y
+
+End_L65087_MouseMove:
+    Exit Sub
+
+Err_L65087_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65087_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65087_MouseMove
+
+End Sub
+
+Private Sub L65087_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65087_MouseUp
+
+    StopDrag
+
+End_L65087_MouseUp:
+    Exit Sub
+
+Err_L65087_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65087_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65087_MouseUp
+
+End Sub
+
+
+Private Sub L65077_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65077_MouseDown
+
+  If Me.L65077.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65077_MouseDown:
+    Exit Sub
+
+Err_L65077_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65077_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65077_MouseDown
+
+End Sub
+
+Private Sub L65077_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65077_MouseMove
+
+    DetectDrop Me, Me.L65077, Button, Shift, x, y
+
+End_L65077_MouseMove:
+    Exit Sub
+
+Err_L65077_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65077_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65077_MouseMove
+
+End Sub
+
+Private Sub L65077_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65077_MouseUp
+
+    StopDrag
+
+End_L65077_MouseUp:
+    Exit Sub
+
+Err_L65077_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65077_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65077_MouseUp
+
+End Sub
+
+
+Private Sub L65078_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65078_MouseDown
+
+  If Me.L65078.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65078_MouseDown:
+    Exit Sub
+
+Err_L65078_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65078_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65078_MouseDown
+
+End Sub
+
+Private Sub L65078_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65078_MouseMove
+
+    DetectDrop Me, Me.L65078, Button, Shift, x, y
+
+End_L65078_MouseMove:
+    Exit Sub
+
+Err_L65078_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65078_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65078_MouseMove
+
+End Sub
+
+Private Sub L65078_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65078_MouseUp
+
+    StopDrag
+
+End_L65078_MouseUp:
+    Exit Sub
+
+Err_L65078_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65078_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65078_MouseUp
+
+End Sub
+
+
+Private Sub L65079_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65079_MouseDown
+
+  If Me.L65079.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65079_MouseDown:
+    Exit Sub
+
+Err_L65079_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65079_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65079_MouseDown
+
+End Sub
+
+Private Sub L65079_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65079_MouseMove
+
+    DetectDrop Me, Me.L65079, Button, Shift, x, y
+
+End_L65079_MouseMove:
+    Exit Sub
+
+Err_L65079_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65079_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65079_MouseMove
+
+End Sub
+
+Private Sub L65079_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65079_MouseUp
+
+    StopDrag
+
+End_L65079_MouseUp:
+    Exit Sub
+
+Err_L65079_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65079_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65079_MouseUp
+
+End Sub
+
+
+Private Sub L65059_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65059_MouseDown
+
+  If Me.L65059.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65059_MouseDown:
+    Exit Sub
+
+Err_L65059_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65059_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65059_MouseDown
+
+End Sub
+
+Private Sub L65059_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65059_MouseMove
+
+    DetectDrop Me, Me.L65059, Button, Shift, x, y
+
+End_L65059_MouseMove:
+    Exit Sub
+
+Err_L65059_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65059_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65059_MouseMove
+
+End Sub
+
+Private Sub L65059_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65059_MouseUp
+
+    StopDrag
+
+End_L65059_MouseUp:
+    Exit Sub
+
+Err_L65059_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65059_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65059_MouseUp
+
+End Sub
+
+
+Private Sub L65088_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65088_MouseDown
+
+  If Me.L65088.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65088_MouseDown:
+    Exit Sub
+
+Err_L65088_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65088_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65088_MouseDown
+
+End Sub
+
+Private Sub L65088_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65088_MouseMove
+
+    DetectDrop Me, Me.L65088, Button, Shift, x, y
+
+End_L65088_MouseMove:
+    Exit Sub
+
+Err_L65088_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65088_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65088_MouseMove
+
+End Sub
+
+Private Sub L65088_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65088_MouseUp
+
+    StopDrag
+
+End_L65088_MouseUp:
+    Exit Sub
+
+Err_L65088_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65088_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65088_MouseUp
+
+End Sub
+
+
+Private Sub L65060_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65060_MouseDown
+
+  If Me.L65060.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65060_MouseDown:
+    Exit Sub
+
+Err_L65060_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65060_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65060_MouseDown
+
+End Sub
+
+Private Sub L65060_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65060_MouseMove
+
+    DetectDrop Me, Me.L65060, Button, Shift, x, y
+
+End_L65060_MouseMove:
+    Exit Sub
+
+Err_L65060_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65060_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65060_MouseMove
+
+End Sub
+
+Private Sub L65060_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65060_MouseUp
+
+    StopDrag
+
+End_L65060_MouseUp:
+    Exit Sub
+
+Err_L65060_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65060_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65060_MouseUp
+
+End Sub
+
+
+Private Sub L65061_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65061_MouseDown
+
+  If Me.L65061.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65061_MouseDown:
+    Exit Sub
+
+Err_L65061_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65061_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65061_MouseDown
+
+End Sub
+
+Private Sub L65061_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65061_MouseMove
+
+    DetectDrop Me, Me.L65061, Button, Shift, x, y
+
+End_L65061_MouseMove:
+    Exit Sub
+
+Err_L65061_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65061_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65061_MouseMove
+
+End Sub
+
+Private Sub L65061_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65061_MouseUp
+
+    StopDrag
+
+End_L65061_MouseUp:
+    Exit Sub
+
+Err_L65061_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65061_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65061_MouseUp
+
+End Sub
+
+Private Sub L65062_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65062_MouseDown
+
+  If Me.L65062.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65062_MouseDown:
+    Exit Sub
+
+Err_L65062_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65062_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65062_MouseDown
+
+End Sub
+
+Private Sub L65062_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65062_MouseMove
+
+    DetectDrop Me, Me.L65062, Button, Shift, x, y
+
+End_L65062_MouseMove:
+    Exit Sub
+
+Err_L65062_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65062_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65062_MouseMove
+
+End Sub
+
+Private Sub L65062_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65062_MouseUp
+
+    StopDrag
+
+End_L65062_MouseUp:
+    Exit Sub
+
+Err_L65062_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65062_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65062_MouseUp
+
+End Sub
+Private Sub L65063_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65063_MouseDown
+
+  If Me.L65063.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65063_MouseDown:
+    Exit Sub
+
+Err_L65063_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65063_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65063_MouseDown
+
+End Sub
+
+Private Sub L65063_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65063_MouseMove
+
+    DetectDrop Me, Me.L65063, Button, Shift, x, y
+
+End_L65063_MouseMove:
+    Exit Sub
+
+Err_L65063_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65063_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65063_MouseMove
+
+End Sub
+
+Private Sub L65063_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65063_MouseUp
+
+    StopDrag
+
+End_L65063_MouseUp:
+    Exit Sub
+
+Err_L65063_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65063_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65063_MouseUp
+
+End Sub
+
+Private Sub L65064_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65064_MouseDown
+
+  If Me.L65064.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65064_MouseDown:
+    Exit Sub
+
+Err_L65064_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65064_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65064_MouseDown
+
+End Sub
+
+Private Sub L65064_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65064_MouseMove
+
+    DetectDrop Me, Me.L65064, Button, Shift, x, y
+
+End_L65064_MouseMove:
+    Exit Sub
+
+Err_L65064_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65064_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65064_MouseMove
+
+End Sub
+
+Private Sub L65064_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65064_MouseUp
+
+    StopDrag
+
+End_L65064_MouseUp:
+    Exit Sub
+
+Err_L65064_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65064_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65064_MouseUp
+
+End Sub
+Private Sub L65065_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65065_MouseDown
+
+  If Me.L65065.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65065_MouseDown:
+    Exit Sub
+
+Err_L65065_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65065_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65065_MouseDown
+
+End Sub
+
+Private Sub L65065_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65065_MouseMove
+
+    DetectDrop Me, Me.L65065, Button, Shift, x, y
+
+End_L65065_MouseMove:
+    Exit Sub
+
+Err_L65065_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65065_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65065_MouseMove
+
+End Sub
+
+Private Sub L65065_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65065_MouseUp
+
+    StopDrag
+
+End_L65065_MouseUp:
+    Exit Sub
+
+Err_L65065_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65065_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65065_MouseUp
+
+End Sub
+
+Private Sub L65066_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65066_MouseDown
+
+  If Me.L65066.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65066_MouseDown:
+    Exit Sub
+
+Err_L65066_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65066_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65066_MouseDown
+
+End Sub
+
+Private Sub L65066_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65066_MouseMove
+
+    DetectDrop Me, Me.L65066, Button, Shift, x, y
+
+End_L65066_MouseMove:
+    Exit Sub
+
+Err_L65066_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65066_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65066_MouseMove
+
+End Sub
+
+Private Sub L65066_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65066_MouseUp
+
+    StopDrag
+
+End_L65066_MouseUp:
+    Exit Sub
+
+Err_L65066_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65066_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65066_MouseUp
+
+End Sub
+Private Sub L65067_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65067_MouseDown
+
+  If Me.L65067.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65067_MouseDown:
+    Exit Sub
+
+Err_L65067_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65067_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65067_MouseDown
+
+End Sub
+
+Private Sub L65067_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65067_MouseMove
+
+    DetectDrop Me, Me.L65067, Button, Shift, x, y
+
+End_L65067_MouseMove:
+    Exit Sub
+
+Err_L65067_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65067_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65067_MouseMove
+
+End Sub
+
+Private Sub L65067_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65067_MouseUp
+
+    StopDrag
+
+End_L65067_MouseUp:
+    Exit Sub
+
+Err_L65067_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65067_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65067_MouseUp
+
+End Sub
+
+
+Private Sub L65069_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65069_MouseDown
+
+  If Me.L65069.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65069_MouseDown:
+    Exit Sub
+
+Err_L65069_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65069_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65069_MouseDown
+
+End Sub
+
+Private Sub L65069_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65069_MouseMove
+
+    DetectDrop Me, Me.L65069, Button, Shift, x, y
+
+End_L65069_MouseMove:
+    Exit Sub
+
+Err_L65069_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65069_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65069_MouseMove
+
+End Sub
+
+Private Sub L65069_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65069_MouseUp
+
+    StopDrag
+
+End_L65069_MouseUp:
+    Exit Sub
+
+Err_L65069_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65069_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65069_MouseUp
+
+End Sub
+
+Private Sub L65071_MouseDown(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65071_MouseDown
+
+  If Me.L65071.ListCount > 0 Then
+    StartDrag Me
+  End If
+
+End_L65071_MouseDown:
+    Exit Sub
+
+Err_L65071_MouseDown:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65071_MouseDown", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65071_MouseDown
+
+End Sub
+
+Private Sub L65071_MouseMove(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65071_MouseMove
+
+    DetectDrop Me, Me.L65071, Button, Shift, x, y
+
+End_L65071_MouseMove:
+    Exit Sub
+
+Err_L65071_MouseMove:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65071_MouseMove", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65071_MouseMove
+
+End Sub
+
+Private Sub L65071_MouseUp(Button As Integer, Shift As Integer, x As Single, y As Single)
+On Error GoTo Err_L65071_MouseUp
+
+    StopDrag
+
+End_L65071_MouseUp:
+    Exit Sub
+
+Err_L65071_MouseUp:
+    MsgBox err.Description & " (" & err.Number & ") in " & IIf(err.Source = Me.name, Me.name & ".L65071_MouseUp", err.Source) & vbOKOnly & vbCritical, "에러 메세지"
+    Resume End_L65071_MouseUp
+
+End Sub
+'========================================================================================
+'========================================================================================
+'여기까지
+'========================================================================================
+'========================================================================================
+
+
